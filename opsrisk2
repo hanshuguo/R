@@ -1,0 +1,267 @@
+
+getwd()
+setwd("C:/Users/1520684/Desktop/ops risk")
+getwd()
+
+#install.packages("SOAR")
+library(SOAR)
+
+
+#read the data
+rb_data_raw=read.csv("RB-Consolidated Data 30 May 2017.csv")
+
+str(rb_data_raw)
+colnames(rb_data_raw)
+Store(rb_data_raw)
+
+
+#==get the selected columns to analyse and give new names
+selected_fields<-c("Indicator.Type",
+                   "Title",
+                   "Applicable.Countries...Location",
+                   "Country.Specific.Checks",
+                   "Frequency",
+                   "Can.the.samples.be.stored.Digitally...Yes.No..",
+                   "Test.performed.by.Full.Time..Part.Time.or.Contract.Staff.",
+                   "Is.the.test.Generic.or.does.it.require.a.Skilled.resource.to.perform.it.",
+                   "Time.spent.every.time.the.test.is.performed...in.minutes."
+                   )
+new_named_fields<-c("Indicator.Type",
+              "Title",
+              "Countries",
+              "Country.Specific.Checks",
+              "Frequency",
+              "stored.Digitally",
+              "FullPartTime",
+              "GenericSkilled",
+              "TimeSpent"
+              )
+
+rb_data_selected<-rb_data_raw[,selected_fields]
+
+colnames(rb_data_selected)<-new_named_fields
+
+str(rb_data_selected)
+
+
+
+#====================Preparing the timeSpent
+rb_data_selected_newTime<-rb_data_selected[,"TimeSpent"]
+
+
+
+t<-rb_data_selected_newTime
+length(t) #3795
+
+#==========Change hour to 60 mins==============
+
+extra_words1<-c(" hours", 
+               "hours",
+               " Hours", 
+               "Hours",
+               " hour", 
+               "hour",
+               " Hour", 
+               "Hour"
+               )
+
+hour_indices<-which(grepl("hour",t))
+hour_indices
+
+t[hour_indices]
+
+
+for (b in hour_indices){
+  print(t[b])
+  temp<-as.character(t[b])
+  for(c in extra_words1) #should only happen once so the order of extra words matters
+  {
+    temp<-gsub(c, "", temp)
+  }
+  print(temp)
+  t[b]=as.numeric(temp)*60
+  print(t[b])
+}
+
+t[hour_indices]
+
+##=============to remove the extra characters
+extra_words2<-c(" minutes", ##start from full words and then substrings
+               "minutes",
+               " Minutes",
+               "Minutes",
+               " mins",
+               "mins",
+               " Mins",
+               "Mins",
+               " min",
+               "min",
+               " Approx",
+               "Approx"
+               )
+
+for (c in extra_words2)
+{
+  t<-gsub(c, "", t)
+}
+
+
+#===============Handling the strange formats==================
+# get the total number after "="
+equalSign_indices<-which(grepl("=",t))
+t[equalSign_indices]<-as.numeric(as.character(strsplit(t[equalSign_indices],"=")[[1]][2]))
+
+# get the numbers before new line
+newLineSign_indices<-which(grepl("\n",t))
+t[newLineSign_indices]<-as.numeric(as.character(strsplit(t[newLineSign_indices],"\n")[[1]][1]))
+
+# get the numbers before dash
+dashSign_indices<-which(grepl(" -",t))
+t[dashSign_indices]<-as.numeric(as.character(strsplit(t[dashSign_indices]," -")[[1]][1]))
+
+
+#==extract  the numeric indices to be used for next steps
+numeric_indices<-sapply(as.numeric(as.character(t)), function(x) is.numeric(x) & !is.na(x))
+
+tt<-t[!numeric_indices]
+
+#=======write non-numerical rows into a file to double check
+write(tt, "non-numeric_indices.csv")
+length(t)
+
+
+#=============================Store the numeric_indices==========
+Store(numeric_indices)
+
+length(t) #3795
+length(tt) #317
+
+rb_data_selected[numeric_indices,"RevisedTimeSpent"]<-t[numeric_indices]
+
+##==remove original timespent
+rb_data_selected_revised<-rb_data_selected[numeric_indices, !names(rb_data_selected) %in% c("TimeSpent")]
+rb_data_selected_revised$RevisedTimeSpent<-as.numeric(rb_data_selected_revised$RevisedTimeSpent)
+
+
+
+#========mulitple frequency. Note: the pattern of "a *b =c" has mulitiplied freuqency already. We need correct in the future
+rb_data_selected_revised$FrequencyNum<-0
+
+rb_data_selected_revised$FrequencyNum[which(rb_data_selected_revised$Frequency=="4 Months")]<-3
+rb_data_selected_revised$FrequencyNum[which(rb_data_selected_revised$Frequency=="Annually")]<-1
+rb_data_selected_revised$FrequencyNum[which(rb_data_selected_revised$Frequency=="Half yearly")]<-2
+rb_data_selected_revised$FrequencyNum[which(rb_data_selected_revised$Frequency=="Half Yearly")]<-2
+rb_data_selected_revised$FrequencyNum[which(rb_data_selected_revised$Frequency=="Monthly")]<-12
+rb_data_selected_revised$FrequencyNum[which(rb_data_selected_revised$Frequency=="Quarterly")]<-4
+
+
+rb_data_selected_revised$RevisedTimeSpentFull<-
+  rb_data_selected_revised$RevisedTimeSpent*rb_data_selected_revised$FrequencyNum
+
+########## group digitally or not into three groups
+rb_data_selected_revised$stored.Digitally[which(as.character(rb_data_selected_revised$stored.Digitally) %in% "Yes - The  details are in the form of Excel and Notepad report")]<-"Yes" 
+rb_data_selected_revised$stored.Digitally[which(as.character(rb_data_selected_revised$stored.Digitally) %in%  "N/A ")]<-"" 
+rb_data_selected_revised$stored.Digitally<-as.factor(as.character(rb_data_selected_revised$stored.Digitally))
+
+
+
+#===============Store the pre-processed data
+Store(rb_data_selected_revised)
+
+
+#====check each country total review time
+aggregate(RevisedTimeSpentFull ~ Countries+stored.Digitally,
+  data=rb_data_selected_revised, FUN="sum")
+
+#====cehck the number of cases reviewed each year for each country 
+aggregate(FrequencyNum ~ Countries,
+          data=rb_data_selected_revised, FUN="sum")
+
+#====check each country total review time for each type
+aggregate(RevisedTimeSpentFull ~ Countries + Indicator.Type +stored.Digitally,
+          data=rb_data_selected_revised, FUN="sum")
+
+#with(rb_data_selected_revised, table(Countries,Indicator.Type))
+#table(rb_data_selected_revised$Countries, rb_data_selected_revised$Indicator.Type)
+
+#====cehck the number of cases reviewed each year for each country  for each type
+aggregate(FrequencyNum ~ Countries+ Indicator.Type,
+          data=rb_data_selected_revised, FUN="sum")
+
+
+#==============================Check the total review time for each case, each type
+avg_time_by_title_type<-aggregate(RevisedTimeSpentFull ~ Title+Indicator.Type,
+                                  data=rb_data_selected_revised, FUN="sum")
+
+avg_time_by_title_type
+
+#==sort by review time 
+avg_time_by_title_type_sorted<-avg_time_by_title_type[order(avg_time_by_title_type$Indicator.Type, 
+                                                            -avg_time_by_title_type$RevisedTimeSpentFull),]
+
+write.csv(avg_time_by_title_type_sorted,"avg_time_by_title_type_sorted.csv")
+
+
+
+#==============================Check the total review time for each case, each type
+avg_time_by_title_type_digital<-aggregate(RevisedTimeSpentFull ~ Title+Indicator.Type+stored.Digitally,
+                                          data=rb_data_selected_revised, FUN="sum")
+
+avg_time_by_title_type_digital
+
+#==sort by review time 
+
+avg_time_by_title_type_digital_sorted<-avg_time_by_title_type_digital[order(avg_time_by_title_type_digital$stored.Digitally,
+                                                                            avg_time_by_title_type_digital$Indicator.Type, 
+                                                                            -avg_time_by_title_type_digital$RevisedTimeSpentFull),]
+
+
+write.csv(avg_time_by_title_type_digital_sorted,"avg_time_by_title_type_digital_sorted.csv")
+
+
+Store(avg_time_by_title_type_sorted)
+Store(avg_time_by_title_type_digital_sorted)
+
+
+
+
+#==============================Join the data
+
+tmp<-avg_time_by_title_type_sorted
+tmp$stored.Digitally<-"Yes"   #============Character sensitive
+
+tmp_total<-tmp
+
+tmp<-avg_time_by_title_type_sorted
+tmp$stored.Digitally<-"No"
+
+tmp_total<-rbind(tmp_total,tmp)
+
+tmp<-avg_time_by_title_type_sorted
+tmp$stored.Digitally<-""
+
+tmp_total<-rbind(tmp_total,tmp)
+
+table(tmp_total$stored.Digitally)
+
+str(tmp_total)
+
+tmp_total$stored.Digitally<-as.factor(tmp_total$stored.Digitally)
+
+str(avg_time_by_title_type_digital_sorted)
+
+head(avg_time_by_title_type_digital_sorted,100)
+
+outcome<-merge(tmp_total, avg_time_by_title_type_digital_sorted,  all.x=TRUE, all.y=TRUE, by=c("Title", "Indicator.Type","stored.Digitally"))
+
+#==========sort by stored.Digitally, and then Indicator.Type
+str(outcome)
+
+outcome_sorted<-outcome[order(outcome$stored.Digitally,
+                              outcome$Indicator.Type, 
+                              -outcome$RevisedTimeSpentFull.x),]
+
+
+write.csv(outcome_sorted,"outcome_sorted.csv")
+
+
